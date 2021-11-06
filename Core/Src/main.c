@@ -23,7 +23,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "string.h"
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,6 +43,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 TIM_HandleTypeDef htim1;
 
@@ -68,6 +70,7 @@ const osMessageQueueAttr_t QueueDataADC_attributes = {
 };
 /* USER CODE BEGIN PV */
 
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,6 +78,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 void StartModbus(void *argument);
 void StartADC(void *argument);
@@ -118,6 +122,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART3_UART_Init();
   MX_TIM1_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
@@ -144,6 +149,16 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  if ( QueueDataADCHandle == 0)  // Queue not created
+  {
+	  char *str = "Unable to create Integer Queue\n\n";
+	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
+  }
+  else
+  {
+	  char *str = "Integer Queue Created successfully\n\n";
+	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
+  }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -241,12 +256,12 @@ static void MX_ADC1_Init(void)
   /** Common config
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 4;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -256,6 +271,27 @@ static void MX_ADC1_Init(void)
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -377,6 +413,22 @@ static void MX_USART3_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -435,10 +487,25 @@ static void MX_GPIO_Init(void)
 void StartModbus(void *argument)
 {
   /* USER CODE BEGIN 5 */
+	char buff[64];
+uint16_t valor =1234;
+char *prt;
+osStatus_t status;
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+//	  osMessageGet( QueueDataADCHandle, &valor, 0 );
+	prt=pvPortMalloc(100*sizeof (char));
+	sprintf(prt,"Dato leido de la Queue: %u \n",valor);
+
+	 status = osMessageQueueGet(QueueDataADCHandle, &valor, NULL, 5000);   // wait for message
+	    if (status == osOK) {
+	HAL_UART_Transmit(&huart3, (uint8_t*)prt, strlen(prt), 100);
+	vPortFree(prt);
+	      ; // process data
+	    }
+
+    osDelay(900);
   }
   /* USER CODE END 5 */
 }
@@ -453,10 +520,19 @@ void StartModbus(void *argument)
 void StartADC(void *argument)
 {
   /* USER CODE BEGIN StartADC */
+
+	uint16_t adc1[4];
+	HAL_ADC_Start_DMA(&hadc1, adc1,sizeof (adc1));
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	HAL_ADC_Stop_DMA(&hadc1);
+	HAL_ADC_Start_DMA(&hadc1, adc1,sizeof (adc1));
+//	adc1 = HAL_ADC_PollForConversion(&hadc1, 5000);
+//	osMessageQueuePut(QueueDataADCHandle, &adc1, 5000);
+	osMessageQueuePut(QueueDataADCHandle, &adc1[0], NULL, 5000);
+	osThreadYield();
+    osDelay(1000);
   }
   /* USER CODE END StartADC */
 }
@@ -472,7 +548,7 @@ void StartADC(void *argument)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-
+  // ESTO ES DE FREERTOS
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM4) {
     HAL_IncTick();
