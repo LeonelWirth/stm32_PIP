@@ -25,6 +25,9 @@
 /* USER CODE BEGIN Includes */
 #include "string.h"
 #include "stdio.h"
+#include "Modbus.h"
+#include "ModbusConfig.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,14 +45,17 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+//---------------->  Modbus
+modbusHandler_t ModbusH;
+uint16_t ModbusDATA[8] = { 1, 2, 3, 0, 0, 0, 0, 0};
+//---------------->
+
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
-
 TIM_HandleTypeDef htim1;
-
 UART_HandleTypeDef huart3;
 
-/* Definitions for Modbus */
+/* Definitions for Modbus task */
 osThreadId_t ModbusHandle;
 const osThreadAttr_t Modbus_attributes = {
   .name = "Modbus",
@@ -126,6 +132,21 @@ int main(void)
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
+  // Definiciones para la biblioteca de modbus
+   ModbusH.uModbusType = MB_SLAVE;
+   ModbusH.port =  &huart3;
+   ModbusH.u8id = 1; //Modbus slave ID
+   ModbusH.u16timeOut = 1000;
+   ModbusH.EN_Port = NULL;
+   ModbusH.u16regs = ModbusDATA;
+   ModbusH.u16regsize= sizeof(ModbusDATA)/sizeof(ModbusDATA[0]);
+   ModbusH.xTypeHW = USART_HW;
+   //Initialize Modbus library
+   ModbusInit(&ModbusH);
+     //Start capturing traffic on serial Port
+     ModbusStart(&ModbusH);
+
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -152,12 +173,12 @@ int main(void)
   if ( QueueDataADCHandle == 0)  // Queue not created
   {
 	  char *str = "Unable to create Integer Queue\n\n";
-	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
+//	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
   }
   else
   {
 	  char *str = "Integer Queue Created successfully\n\n";
-	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
+//	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
   }
   /* USER CODE END RTOS_QUEUES */
 
@@ -487,6 +508,7 @@ static void MX_GPIO_Init(void)
 void StartModbus(void *argument)
 {
   /* USER CODE BEGIN 5 */
+	int i =0;
 	char buff[64];
 uint16_t valor =1234;
 char *prt;
@@ -500,12 +522,14 @@ osStatus_t status;
 
 	 status = osMessageQueueGet(QueueDataADCHandle, &valor, NULL, 5000);   // wait for message
 	    if (status == osOK) {
-	HAL_UART_Transmit(&huart3, (uint8_t*)prt, strlen(prt), 100);
+//	HAL_UART_Transmit(&huart3, (uint8_t*)prt, strlen(prt), 100);
 	vPortFree(prt);
 	      ; // process data
 	    }
 
     osDelay(900);
+    ModbusDATA[5]= ++i;
+
   }
   /* USER CODE END 5 */
 }
@@ -522,16 +546,18 @@ void StartADC(void *argument)
   /* USER CODE BEGIN StartADC */
 
 	uint16_t adc1[4];
-	HAL_ADC_Start_DMA(&hadc1, adc1,sizeof (adc1));
+//	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1,sizeof (adc1));
+//	HAL_ADC_Start_DMA(hadc, pData, Length)
   /* Infinite loop */
   for(;;)
   {
-	HAL_ADC_Stop_DMA(&hadc1);
-	HAL_ADC_Start_DMA(&hadc1, adc1,sizeof (adc1));
+//	HAL_ADC_Stop_DMA(&hadc1);
+//	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1,sizeof (adc1));
 //	adc1 = HAL_ADC_PollForConversion(&hadc1, 5000);
 //	osMessageQueuePut(QueueDataADCHandle, &adc1, 5000);
 	osMessageQueuePut(QueueDataADCHandle, &adc1[0], NULL, 5000);
 	osThreadYield();
+
     osDelay(1000);
   }
   /* USER CODE END StartADC */
