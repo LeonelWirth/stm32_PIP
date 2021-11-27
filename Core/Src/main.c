@@ -45,10 +45,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-//---------------->  Modbus
-modbusHandler_t ModbusH;
-uint16_t ModbusDATA[8] = { 1, 2, 3, 0, 0, 0, 0, 0};
-//---------------->
+
 
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
@@ -95,7 +92,10 @@ void StartADC(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+//---------------->  Modbus
+modbusHandler_t ModbusH;
+uint16_t ModbusDATA[8] = { 1, 2, 3, 0, 0, 0, 0, 0}; // Mapa modbus!
+//---------------->
 /* USER CODE END 0 */
 
 /**
@@ -141,10 +141,11 @@ int main(void)
    ModbusH.u16regs = ModbusDATA;
    ModbusH.u16regsize= sizeof(ModbusDATA)/sizeof(ModbusDATA[0]);
    ModbusH.xTypeHW = USART_HW;
+
    //Initialize Modbus library
    ModbusInit(&ModbusH);
-     //Start capturing traffic on serial Port
-     ModbusStart(&ModbusH);
+   //Start capturing traffic on serial Port
+   ModbusStart(&ModbusH);
 
 
   /* USER CODE END 2 */

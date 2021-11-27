@@ -5,13 +5,13 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c 
+../Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_3.c 
 
 OBJS += \
-./Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.o 
+./Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_3.o 
 
 C_DEPS += \
-./Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.d 
+./Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_3.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
