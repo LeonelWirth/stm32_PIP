@@ -23,6 +23,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "string.h"
+#include "stdio.h"
+#include "Modbus.h"
+#include "ModbusConfig.h"
 
 /* USER CODE END Includes */
 
@@ -42,6 +46,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 SPI_HandleTypeDef hspi1;
 
@@ -63,12 +68,27 @@ const osThreadAttr_t ADC_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for Encoders */
+osThreadId_t EncodersHandle;
+const osThreadAttr_t Encoders_attributes = {
+  .name = "Encoders",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for Control */
+osThreadId_t ControlHandle;
+const osThreadAttr_t Control_attributes = {
+  .name = "Control",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for QueueDataADC */
 osMessageQueueId_t QueueDataADCHandle;
 const osMessageQueueAttr_t QueueDataADC_attributes = {
   .name = "QueueDataADC"
 };
 /* USER CODE BEGIN PV */
+
 
 /* USER CODE END PV */
 
@@ -77,10 +97,13 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_SPI1_Init(void);
 void StartModbus(void *argument);
 void StartADC(void *argument);
+void StartEncoders(void *argument);
+void StartControl(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -88,6 +111,65 @@ void StartADC(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+//---------------->  Modbus
+modbusHandler_t ModbusH;
+uint16_t ModbusDATA[13]={1,8000,0,0,0,0,0,0,0,0,0,0,0}; // Mapa modbus!
+//---------------->
+uint32_t Ts =100; // En ms!
+float incremento_enconder = 0;
+float velocidad;
+float ranuras = 20.0;
+float freq = 10.0;
+
+//Si se interrumpe por flanco ascendente del pin 0 (Enconder optico)
+void HAL_GPIO_EXTI_Callback (uint16_t GPIO_Pin){
+	if (GPIO_Pin == D01_Encoder_Pin){
+		incremento_enconder += 1;
+	}
+	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+}
+
+void Sentido(uint16_t valor){
+	//Motor gira en un sentido
+	if(valor == 0){
+		HAL_GPIO_WritePin(OUT1_2_GPIO_Port, OUT1_2_Pin, SET);
+		HAL_GPIO_WritePin(OUT1_1_GPIO_Port, OUT1_1_Pin, RESET);
+	}
+	//Motor gira en otro sentido
+	else if(valor == 1){
+		HAL_GPIO_WritePin(OUT1_2_GPIO_Port, OUT1_2_Pin, RESET);
+		HAL_GPIO_WritePin(OUT1_1_GPIO_Port, OUT1_1_Pin, SET);
+
+	}
+	else{ // Break
+		HAL_GPIO_WritePin(OUT1_2_GPIO_Port, OUT1_2_Pin, RESET);
+		HAL_GPIO_WritePin(OUT1_1_GPIO_Port, OUT1_1_Pin, RESET);
+	}
+}
+
+void Velocidad(uint16_t param){
+	if(incremento_enconder == 0){
+		velocidad = 0.0;
+	}else{
+		if (param ==0){
+			velocidad = freq*incremento_enconder/(ranuras);
+			incremento_enconder=0;
+		}
+		if (param == 1){
+			velocidad =  freq*incremento_enconder/(ranuras);
+			incremento_enconder=0;
+		}
+	}
+}
+
+
+
+
+
+
+
+
+
 
 /* USER CODE END 0 */
 
@@ -121,10 +203,27 @@ int main(void)
   MX_GPIO_Init();
   MX_USART3_UART_Init();
   MX_TIM1_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
+  // Definiciones para la biblioteca de modbus
+   ModbusH.uModbusType = MB_SLAVE;
+   ModbusH.port =  &huart3;
+   ModbusH.u8id = 1; //Modbus slave ID
+   ModbusH.u16timeOut = 1000;
+   ModbusH.EN_Port = NULL;
+   ModbusH.u16regs = ModbusDATA;
+   ModbusH.u16regsize= sizeof(ModbusDATA)/sizeof(ModbusDATA[0]);
+   ModbusH.xTypeHW = USART_HW;
+
+   //Initialize Modbus library
+   ModbusInit(&ModbusH);
+   //Start capturing traffic on serial Port
+   ModbusStart(&ModbusH);
+
+   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -148,6 +247,16 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  if ( QueueDataADCHandle == 0)  // Queue not created
+  {
+	  char *str = "Unable to create Integer Queue\n\n";
+//	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
+  }
+  else
+  {
+	  char *str = "Integer Queue Created successfully\n\n";
+//	  HAL_UART_Transmit(&huart3, (uint8_t *)str, strlen (str), HAL_MAX_DELAY);
+  }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -156,6 +265,12 @@ int main(void)
 
   /* creation of ADC */
   ADCHandle = osThreadNew(StartADC, NULL, &ADC_attributes);
+
+  /* creation of Encoders */
+  EncodersHandle = osThreadNew(StartEncoders, NULL, &Encoders_attributes);
+
+  /* creation of Control */
+  ControlHandle = osThreadNew(StartControl, NULL, &Control_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -245,12 +360,12 @@ static void MX_ADC1_Init(void)
   /** Common config
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 4;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -260,6 +375,27 @@ static void MX_ADC1_Init(void)
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Rank = ADC_REGULAR_RANK_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -320,6 +456,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 0 */
 
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
@@ -330,10 +467,19 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.Period = 10000;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
@@ -419,6 +565,22 @@ static void MX_USART3_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -428,9 +590,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, OUT2_1_Pin|OUT2_2_Pin|OUT1_2_Pin|OUT1_1_Pin
@@ -438,6 +604,13 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, OUT4_1_Pin|OUT4_2_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : LED_Pin */
+  GPIO_InitStruct.Pin = LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : OUT2_1_Pin OUT2_2_Pin OUT1_2_Pin OUT1_1_Pin
                            OUT3_2_Pin OUT3_1_Pin */
@@ -461,6 +634,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
@@ -477,10 +654,28 @@ static void MX_GPIO_Init(void)
 void StartModbus(void *argument)
 {
   /* USER CODE BEGIN 5 */
+	int i =0;
+	char buff[64];
+	uint16_t valor =1234;
+	char *prt;
+	osStatus_t status;
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+//	  osMessageGet( QueueDataADCHandle, &valor, 0 );
+	prt=pvPortMalloc(100*sizeof (char));
+	sprintf(prt,"Dato leido de la Queue: %u \n",valor);
+
+	 status = osMessageQueueGet(QueueDataADCHandle, &valor, NULL, 5000);   // wait for message
+	    if (status == osOK) {
+//	HAL_UART_Transmit(&huart3, (uint8_t*)prt, strlen(prt), 100);
+	vPortFree(prt);
+	      ; // process data
+	    }
+
+    osDelay(900);
+//    ModbusDATA[5]= ++i;
+
   }
   /* USER CODE END 5 */
 }
@@ -495,12 +690,71 @@ void StartModbus(void *argument)
 void StartADC(void *argument)
 {
   /* USER CODE BEGIN StartADC */
+
+	uint16_t adc1[4];
+//	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1,sizeof (adc1));
+//	HAL_ADC_Start_DMA(hadc, pData, Length)
+  /* Infinite loop */
+  for(;;)
+  {
+//	HAL_ADC_Stop_DMA(&hadc1);
+//	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1,sizeof (adc1));
+//	adc1 = HAL_ADC_PollForConversion(&hadc1, 5000);
+//	osMessageQueuePut(QueueDataADCHandle, &adc1, 5000);
+	osMessageQueuePut(QueueDataADCHandle, &adc1[0], NULL, 5000);
+	osThreadYield();
+
+    osDelay(1000);
+  }
+  /* USER CODE END StartADC */
+}
+
+/* USER CODE BEGIN Header_StartEncoders */
+/**
+* @brief Function implementing the Encoders thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartEncoders */
+void StartEncoders(void *argument)
+{
+  /* USER CODE BEGIN StartEncoders */
+	// Signo esta en ModbusDATA[0]
+	// Setpoint esta enModbusDATA[1]
+	// Velocidad es global
+
+  /* Infinite loop */
+  for(;;)
+  {
+
+    Velocidad(ModbusDATA[0]);// Calculo la velocidad para devolver por modbus
+    osDelay(Ts);// Delta T
+    Sentido(ModbusDATA[0]);
+    ModbusDATA[8] = (uint16_t)(100.0*velocidad);
+    ModbusDATA[9] = (uint16_t)incremento_enconder;
+    htim1.Instance->CCR1 = ModbusDATA[1];
+
+
+  }
+  /* USER CODE END StartEncoders */
+}
+
+/* USER CODE BEGIN Header_StartControl */
+/**
+* @brief Function implementing the Control thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartControl */
+void StartControl(void *argument)
+{
+  /* USER CODE BEGIN StartControl */
   /* Infinite loop */
   for(;;)
   {
     osDelay(1);
   }
-  /* USER CODE END StartADC */
+  /* USER CODE END StartControl */
 }
 
 /**
@@ -514,7 +768,7 @@ void StartADC(void *argument)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-
+  // ESTO ES DE FREERTOS
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM4) {
     HAL_IncTick();
